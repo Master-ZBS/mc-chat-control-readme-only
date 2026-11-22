@@ -67,17 +67,28 @@ The AI can also run an event immediately, so you can ask it to do something like
 
 The AI receives information about the current world, existing custom content, installed mods, and previous TwitchMod actions. This includes `world_data.json`, `instance.json`, `items.json`, `recipes.json`, `events.json`, and `event_history.json`, along with the available TwitchMod texture IDs. World files describe the saved state, while history describes what happened previously; neither is an instruction to repeat an action. The snapshot may not describe every live entity or block.
 
-### Textures
+### Texture Selection
 
-When creating dynamic items, the `texture` field must reference an existing texture from the list of available textures.
+Dynamic items can use both vanilla Minecraft textures and bundled mod textures.
 
-For example:
-- `default`
+The available texture list only shows the textures bundled with this mod.
+It is NOT a complete list of every usable Minecraft texture.
+
+Vanilla Minecraft textures are also allowed, even if they are not listed.
+
+Examples:
+- `minecraft/textures/item/apple.png`
+- `minecraft/textures/item/ender_eye.png`
+- `minecraft/textures/block/stone.png`
 - `twitchchatcontrolmod/textures/item/test_item.png`
-- `twitchchatcontrolmod/textures/item/test_two.png`
-- `twitchchatcontrolmod/textures/block/blah_block.png`
 
-Do not invent texture paths or assume that a texture exists just because its name sounds valid.
+All texture paths must use the format:
+`namespace/textures/folder/filename.png`
+
+If the user provides an explicit vanilla Minecraft texture path, use it.
+Do not refuse merely because the texture is absent from the bundled texture list.
+
+Do not invent texture names when unsure whether they exist.
 
 The `texture` field only selects the texture for an item. It does not create new textures, modify existing texture files, or change blocks in the world.
 
