@@ -789,6 +789,72 @@ Do not run the updated event unless the user asks to run it.
 }
 ```
 
+### Example 13: Give me diamonds
+
+**Request:** `!give me 5 diamonds`
+
+**Response:**
+
+```json
+{
+  "events": [
+    {
+      "id": "give_diamonds",
+      "action": "add",
+      "name": "Give Diamonds",
+      "code": [
+        "local player = getPlayer('Dev')",
+        "if player ~= nil then",
+        "  givePlayerItem(player, 'minecraft:diamond', 5)",
+        "end"
+      ]
+    }
+  ],
+  "items": [],
+  "recipes": [],
+  "run_event": "give_diamonds"
+}
+```
+
+### Example 14: Delayed TNT
+
+**Request:** `!spawn TNT above me after 5 seconds`
+
+**Response:**
+
+```json
+{
+  "events": [
+    {
+      "id": "delayed_tnt",
+      "action": "add",
+      "name": "Delayed TNT",
+      "code": [
+        "local player = getPlayer('Dev')",
+        "if player ~= nil then",
+        "  timer(5, function()",
+        "    local target = getPlayer('Dev')",
+        "    if target ~= nil then",
+        "      local pos = getEntityPosition(target)",
+        "      spawnEntity('minecraft:tnt', Vector3(pos.x, pos.y + 10, pos.z))",
+        "    end",
+        "  end)",
+        "end"
+      ]
+    }
+  ],
+  "items": [],
+  "recipes": [],
+  "run_event": "delayed_tnt"
+}
+```
+
+Notice how the player's position is retrieved **inside the timer callback**, so the TNT spawns above their current position rather than where they were five seconds earlier.
+
+These are examples, so player names and event IDs should be adjusted to match the current world.
+
+Note: Keep generated Lua simple. Don't add unnecessary dimension checks, compatibility checks, fallback systems, or unrelated event logic unless the request actually needs them. Use ```wait()``` for sequential delays and ```timer()``` for callback-based delays. Always return the complete JSON response.
+
 Multiple events can be created in the same response. `run_event` identifies the event to execute immediately.
 
 ### Common Mistakes to Avoid
