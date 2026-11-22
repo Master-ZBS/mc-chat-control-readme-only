@@ -1,4 +1,5 @@
 <img width="2400" height="600" alt="minecraft" src="https://github.com/user-attachments/assets/cdfe3420-ec08-4e76-ad27-2a8bb1ef80e5" />
+
 # TwitchMod
 
 A Minecraft mod that lets Twitch chat (and people in-game) add all sorts of ridiculous things to Minecraft using AI.
