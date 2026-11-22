@@ -95,6 +95,36 @@ This section documents the Lua functions exported by the **current Java source**
 
 **Important conventions:** `Vector3(x, y, z)` produces a coordinate/vector table with `.x`, `.y`, and `.z`. `player`, `entity`, `item`, and `block` below mean *Lua references returned by the corresponding APIs*, not their names or Minecraft IDs. For IDs, use registry strings such as `minecraft:zombie` and `minecraft:diamond`. Many lookups return `nil` if nothing is found. The command executor and its dimension matter for some functions. The source code remains the ultimate authority if the mod has been changed since this guide was written.
 
+### Waits and Timers
+
+There are two ways to delay Lua code.
+
+**Sequential waits** pause the current sequence before continuing:
+
+```lua
+basicChat("Hello!")
+wait(3)
+basicChat("Three seconds later!")
+```
+
+**Timers** schedule a function to execute later, without pausing the rest of the script:
+
+```lua
+basicChat("Hello!")
+
+timer(3, function()
+    basicChat("Three seconds later!")
+end)
+
+basicChat("This runs immediately!")
+```
+
+You can also use `waitTicks()` and `timerTicks()` if you prefer Minecraft ticks instead of seconds.
+
+Don't use callbacks with `wait()` or `waitTicks()`. Use `timer()` or `timerTicks()` instead.
+
+Both types of delay use the Minecraft server's tick scheduler, so they don't freeze the game.
+
 ## Chat and commands (`LuaChatAPI`, `LuaCommandAPI`)
 
 | Lua function | What it does |
@@ -110,10 +140,10 @@ Use `basicChat("Hello!")` for a greeting intended for everyone, or `sendPlayerMe
 | Lua function | What it does |
 |---|---|
 | `Vector3(x, y, z)` | Creates a vector with `x`, `y`, and `z` numeric components. |
-| `wait(seconds)` | Pauses sequential execution when used as a standalone supported Lua statement. |
-| `waitTicks(ticks)` | Pauses sequential execution for Minecraft ticks. |
-| `wait(seconds, callback)` | Schedules a callback after a delay (0–3600 seconds). |
-| `waitTicks(ticks, callback)` | Schedules a callback after a delay (0–72000 ticks). |
+| `wait(seconds)` | Pauses the current Lua sequence for a number of seconds. |
+| `waitTicks(ticks)` | Same as `wait()`, but uses Minecraft ticks (20 ticks = 1 second). |
+| `timer(seconds, callback)` | Runs a function after a delay without pausing the rest of the script. |
+| `timerTicks(ticks, callback)` | Same as `timer()`, but uses Minecraft ticks. |
 | `playSound(soundId, position, volume, pitch [, category])` | Plays a registered sound around a `Vector3` in the executor's dimension. |
 | `playSoundAtEntity(entity, soundId, volume, pitch [, category])` | Plays a registered sound at an entity in its dimension. |
 | `spawnParticle(particleId, position, count)` | Spawns simple particles (1–200); types requiring extra data are unsupported. |
