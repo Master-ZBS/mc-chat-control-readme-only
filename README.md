@@ -250,13 +250,56 @@ Stack references expose readable `.id`, `.name`, `.count`, `.maxCount`, `.damage
 
 ## Hooks (`LuaHookAPI`)
 
+Hooks let Lua react to gameplay events while the server is running. A Lua event can register a hook with `hook.Add`, but **registering a hook is not the same as triggering it**: the callback runs later when Minecraft fires that event. Hook names and callback signatures are case-sensitive, and the list below reflects the hook manager in the current Forge 1.20.1 source.
+
+### Available hook events
+
+| Hook event name | When it fires | Callback signature | Context fields / behavior |
+|---|---|---|---|
+| `server_tick` | At the end of each server tick (usually 20 times a second). | `function()` | No arguments. Avoid expensive work every tick. |
+| `living_hurt` | When a living entity is hurt. | `function(ctx)` | `ctx.entity` (entity reference), `ctx.damageType` (string), `ctx.amount` (number), `ctx.cancel` (boolean). Set `ctx.cancel = true` to cancel the damage, or change `ctx.amount` to adjust it (finite value from 0 to 2048). |
+| `block_break` | Before a player breaks a block. | `function(ctx)` | `ctx.player` (entity reference), `ctx.block` (block ID string), `ctx.x`, `ctx.y`, `ctx.z` (coordinates), `ctx.dimension` (dimension ID), `ctx.cancel` (boolean), `ctx.spawnPig` (boolean). Set `ctx.cancel = true` to prevent the break; set `ctx.spawnPig = true` to spawn a pig at the block position if the break is allowed. |
+
+These are the **only three hook events** currently accepted by `LuaHookManager`. Names like `on_player_command`, `player_chat`, `on_block_break`, `entity_spawn`, or `player_join` are **not registered hooks** in this version. If a requested behavior requires an unsupported hook, it needs a Java-side implementation; inventing a hook name will fail at runtime.
+
+### Hook functions
+
 | Lua function | What it does |
 |---|---|
-| `hook.Add(event, name, callback)` | Registers a named callback on a supported event; returns a hook connection. |
-| `hook.Remove(event, name)` | Removes a previously registered named hook. |
-| `hook.GetNames(event)` | Lists names of callbacks registered for an event. |
+| `hook.Add(event, name, callback)` | Registers or replaces a callback on the named supported event. Returns a connection object. |
+| `hook.Remove(event, name)` | Removes a registered callback; returns whether removal succeeded. |
+| `hook.GetNames(event)` | Returns an array of registered callback names for a supported event. |
+| `connection:Disconnect()` | Disconnects the particular hook registration; returns whether it was disconnected. |
+| `connection:IsConnected()` | Reports whether that connection is still active. |
 
-Hooks are managed by TwitchMod's Lua hook manager; their event names and callback arguments are defined by the hook system. Do not invent hook event names. A connection may expose a `Disconnect()` mechanism.
+Each hook has a **hook event name** (such as `block_break`) and a **registration name** chosen by the script (such as `prevent_breaking`). The registration name identifies that callback and can be used with `hook.Remove`. Adding another hook with the same event and registration name replaces the previous one. Up to 64 named callbacks can be registered per event.
+
+### Example: cancel block breaking
+
+```lua
+hook.Add("block_break", "prevent_breaking", function(ctx)
+    ctx.cancel = true
+    sendPlayerMessage(ctx.player, "Block breaking is currently disabled!")
+end)
+```
+
+The `ctx` table is the only argument; `function(player, blockPos)` is **incorrect** for this hook. The player is available as `ctx.player`, and the block location is `ctx.x`, `ctx.y`, and `ctx.z`. Returning `true` from a callback does not cancel a block break; set `ctx.cancel = true` instead.
+
+### Example: modify incoming damage
+
+```lua
+hook.Add("living_hurt", "half_damage", function(ctx)
+    ctx.amount = ctx.amount * 0.5
+end)
+```
+
+### Example: remove a hook
+
+```lua
+hook.Remove("block_break", "prevent_breaking")
+```
+
+Hooks are held in memory and cleared when the server stops. Saving a Lua event containing `hook.Add` in `events.json` does **not** automatically make that hook active after a restart. The registration event must run again to install it. When a callback throws an error, the hook manager logs the error and disconnects that callback to prevent repeated failures.
 
 ## Mod integration and Pehkui (`LuaModAPI`, `LuaPehkuiAPI`)
 
@@ -308,6 +351,16 @@ An event `add` operation requires `id`, `action`, `name`, and `code`. The `code`
 ```
 
 This registers the event and runs it once. It does **not** automatically delete `say_hello` afterward. For ephemeral responses, use unique IDs and arrange for cleanup using a supported operation. Avoid registering persistent hooks merely to answer a greeting.
+
+#### Why `run_event` sometimes does not execute
+
+`run_event` is a **top-level JSON field**, not an event named `run_event` and not a Lua function call. Its value must match the ID of an event already in `events.json` or one added by the same response. Creating an event definition without setting this field only registers it; it does not run the event.
+
+After validating the response, TwitchMod saves definition changes, reloads changed recipes and items, then starts the selected event. If an earlier step fails, the one-shot event will **not** start. For example, an invalid `items.json` missing its `used_ids` array makes item reloading fail and stops execution before `run_event`. Fix the underlying file rather than retrying the same response blindly.
+
+A successful one-shot trigger changes `run_event` to `null` in `latest_response.json` to prevent a manual re-interpretation from replaying it. This does not delete the event definition. Also, an event that installs a hook may execute successfully without producing an immediate visible effect: the hook callback only runs when the corresponding gameplay action occurs.
+
+For a minimal test of the mechanism, use an event whose code is `basicChat("One-shot event ran!")` and set `"run_event"` to that event's ID. Keep `items` and `recipes` empty while testing, so their reloads cannot interfere.
 
 ### Items
 
