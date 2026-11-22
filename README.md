@@ -67,6 +67,26 @@ The AI can also run an event immediately, so you can ask it to do something like
 
 The AI receives information about the current world, existing custom content, installed mods, and previous TwitchMod actions. This includes `world_data.json`, `instance.json`, `items.json`, `recipes.json`, `events.json`, and `event_history.json`, along with the available TwitchMod texture IDs. World files describe the saved state, while history describes what happened previously; neither is an instruction to repeat an action. The snapshot may not describe every live entity or block.
 
+### Textures
+
+When creating dynamic items, the `texture` field must reference an existing texture from the list of available textures.
+
+For example:
+- `default`
+- `twitchchatcontrolmod/textures/item/test_item.png`
+- `twitchchatcontrolmod/textures/item/test_two.png`
+- `twitchchatcontrolmod/textures/block/blah_block.png`
+
+Do not invent texture paths or assume that a texture exists just because its name sounds valid.
+
+The `texture` field only selects the texture for an item. It does not create new textures, modify existing texture files, or change blocks in the world.
+
+Textures are handled by Minecraft's client-side rendering system, not the Lua interpreter.
+
+If asked to demonstrate a texture, create a dynamic item using that texture and give it to the player so they can inspect it. Do not simply claim that the texture is visible.
+
+If the texture does not appear correctly, do not claim it worked. The item's rendering system may need to be updated or reloaded.
+
 ### Conversational requests
 
 Every request produces structured JSON. A greeting or question can be handled by a one-shot Lua event that uses `basicChat` or `sendPlayerMessage`, then identifies that event with `run_event`. This is different from returning a plain-text reply. The event is registered before it is run; `run_event` itself does not delete the registered event definition.
