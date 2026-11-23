@@ -362,6 +362,55 @@ end, "op")
 
 After running this registration event, an operator can type `.heal`. To allow everyone, pass `"all"` instead. The Java API enforces a one-second per-player cooldown, limits registration to 64 commands per server, and clears commands when the server stops. Chat commands must be registered again after a restart.
 
+## Native particle drawing (`LuaParticleAPI`)
+
+TwitchMod can spawn particles directly through Minecraft's server particle system. **Do not generate hundreds of `/particle` commands** to draw a line or circle. Use these helpers instead. They work in the event executor's current dimension, and positions are `Vector3(x, y, z)` values. All methods run immediately; use `waitTicks`/`wait` to animate effects over time.
+
+The existing `spawnParticle(id, pos, count)` and `spawnDustParticle(pos, red, green, blue, size, count)` functions still work.
+
+| Function | Purpose |
+|---|---|
+| `particles.spawn(id, pos [, count [, spread [, speed]]])` | Spawn 1–200 ordinary particles near a position. Spread defaults to 0; speed defaults to 0. |
+| `particles.line(id, from, to [, points])` | Draw a line, including both endpoints; default 32 points. |
+| `particles.circle(id, center, radius [, points])` | Draw a horizontal circle in the X/Z plane; default 48 points. |
+| `particles.dust(pos, red, green, blue [, size [, count [, spread]]])` | Spawn colored dust. RGB are decimal values from 0 to 1, size defaults to 1. |
+| `particles.dustCircle(center, radius, red, green, blue [, size [, points]])` | Draw a precisely positioned horizontal colored warning ring; default size 1 and 48 points. |
+
+`id` is a particle ID such as `minecraft:flame`, `minecraft:smoke`, `minecraft:end_rod`, or `minecraft:happy_villager`. Simple particles are supported; particles requiring block/item/custom parameters are not. For colored dust, use `particles.dust` or `particles.dustCircle` instead of `minecraft:dust` with `particles.spawn`. Each shape call is limited to **256 points** and a radius of **128 blocks**. The functions do not require commands or new networking code.
+
+### Orbital-strike warning circle
+
+```lua
+-- Example center (use the actual target position in a generated event).
+local target = Vector3(100, 70, 100)
+local radius = 12
+
+-- Red ring = danger zone, above the ground by 0.15 blocks.
+particles.dustCircle(Vector3(target.x, target.y + 0.15, target.z),
+    radius, 1, 0, 0, 1.2, 64)
+
+-- Green ring = one possible safe boundary outside the blast zone.
+particles.dustCircle(Vector3(target.x, target.y + 0.15, target.z),
+    radius + 4, 0, 1, 0, 0.9, 64)
+```
+
+### Particle beam
+
+```lua
+particles.line("minecraft:end_rod",
+    Vector3(0, 70, 0), Vector3(0, 100, 0), 60)
+```
+
+### Small flame cloud
+
+```lua
+particles.spawn("minecraft:flame", Vector3(0, 65, 0), 40, 1.5, 0.03)
+```
+
+Notes: `particles.line`, `particles.circle` and `particles.dustCircle` submit one server-side particle packet per sampled point (e.g. 64 packets for 64 points), **not** one packet for the entire shape. They avoid command parsing/logging and eliminate the need for Conner to generate a command for every particle, but repeated large shapes every tick can still be expensive. A positive Lua return value from a shape method is the number of points submitted, not proof that a client rendered them. Vanilla particle distance and client settings may hide some effects.
+
+**Conner guidance:** Prefer these shape methods when drawing warnings, rings, beams or markers. Do not repeat shapes every tick indefinitely unless explicitly needed; keep point counts modest and stop temporary effects when finished. Do not mark one-shot visual explosions as persistent events.
+
 
 ## Hooks (`LuaHookAPI`)
 
