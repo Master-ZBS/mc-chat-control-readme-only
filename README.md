@@ -313,6 +313,56 @@ These functions manipulate **item stack references**. They do not register a new
 
 Stack references expose readable `.id`, `.name`, `.count`, `.maxCount`, `.damage`, `.maxDamage`, and `.nbt`. Writable properties include `.name`, `.count`, `.damage` and nested `.nbt` keys. NBT type details matter: use `type = "snbt"` for explicit SNBT structures when a Lua map would lose type information.
 
+## World and position helpers (`LuaWorldAPI`)
+
+| Lua function | What it does |
+|---|---|
+| `getGroundPosition(position)` | If the starting block is air, searches down to the first non-air block. Otherwise, searches up to the first non-air block with air above it. Returns that block's `Vector3`, or `nil`. |
+| `getSurfacePosition(position)` | Gets the highest non-air block at the position's X/Z, using the world surface heightmap. Returns its `Vector3`, or `nil`. |
+
+Both functions use the current command executor's dimension, only inspect loaded chunks, and return **block coordinates**, not the air block above. Water, lava, leaves and other non-air blocks can be returned. These functions do not guarantee a safe spawn location.
+
+Example:
+
+```lua
+local player = getPlayer("Dev")
+if player ~= nil then
+    local ground = getGroundPosition(getEntityPosition(player))
+    if ground ~= nil then
+        sendPlayerMessage(player, string.format(
+            "Ground: %d, %d, %d", ground.x, ground.y, ground.z
+        ))
+    end
+end
+```
+
+## Lua chat commands (`LuaChatCommandAPI`)
+
+Chat commands are separate from AI requests and normal Minecraft commands:
+- `!message` sends a request to the AI.
+- `.command args` invokes a Lua callback previously registered with `chatCommand.Add`.
+- `/command` runs an ordinary Minecraft command.
+
+| Lua API | What it does |
+|---|---|
+| `chatCommand.Add(name, callback [, access])` | Registers/replaces `.name`. `access` is `"op"` by default or `"all"` for all players. |
+| `chatCommand.Remove(name)` | Removes a previously registered Lua chat command. |
+| `chatCommand.GetNames()` | Lists the registered Lua chat command names. |
+
+`callback` receives one table `ctx`, with `ctx.player` (player reference), `ctx.command` (name without the dot), `ctx.raw` (full chat message), and `ctx.args` (1-based list of whitespace-separated arguments). Arguments are not quote-aware. Commands must be lowercase letters, digits, or underscores, starting with a letter, up to 32 characters.
+
+Example:
+
+```lua
+chatCommand.Add("heal", function(ctx)
+    setEntityHealth(ctx.player, getEntityMaxHealth(ctx.player))
+    sendPlayerMessage(ctx.player, "Healed!")
+end, "op")
+```
+
+After running this registration event, an operator can type `.heal`. To allow everyone, pass `"all"` instead. The Java API enforces a one-second per-player cooldown, limits registration to 64 commands per server, and clears commands when the server stops. Chat commands must be registered again after a restart.
+
+
 ## Hooks (`LuaHookAPI`)
 
 Hooks let Lua react to gameplay events while the server is running. A Lua event can register a hook with `hook.Add`, but **registering a hook is not the same as triggering it**: the callback runs later when Minecraft fires that event. Hook names and callback signatures are case-sensitive, and the list below reflects the hook manager in the current Forge 1.20.1 source.
@@ -324,8 +374,12 @@ Hooks let Lua react to gameplay events while the server is running. A Lua event 
 | `server_tick` | At the end of each server tick (usually 20 times a second). | `function()` | No arguments. Avoid expensive work every tick. |
 | `living_hurt` | When a living entity is hurt. | `function(ctx)` | `ctx.entity` (entity reference), `ctx.damageType` (string), `ctx.amount` (number), `ctx.cancel` (boolean). Set `ctx.cancel = true` to cancel the damage, or change `ctx.amount` to adjust it (finite value from 0 to 2048). |
 | `block_break` | Before a player breaks a block. | `function(ctx)` | `ctx.player` (entity reference), `ctx.block` (block ID string), `ctx.x`, `ctx.y`, `ctx.z` (coordinates), `ctx.dimension` (dimension ID), `ctx.cancel` (boolean), `ctx.spawnPig` (boolean). Set `ctx.cancel = true` to prevent the break; set `ctx.spawnPig = true` to spawn a pig at the block position if the break is allowed. |
+| `player_chat` | When a player sends a normal chat message. | `function(ctx)` | `ctx.player` (entity reference), `ctx.message` (string), `ctx.cancel` (boolean). Set `ctx.cancel = true` to prevent the message from appearing in chat. Messages starting with `!` are ignored so they can be handled by Conner. |
+| `player_command` | After a command is parsed from a player-backed execution source, but before it executes. | `function(ctx)` | `ctx.player` (entity reference), `ctx.command` (full command string without `/`), `ctx.name` (root command name), `ctx.cancel` (boolean). Set `ctx.cancel = true` to prevent the command from executing. |
 
-These are the **only three hook events** currently accepted by `LuaHookManager`. Names like `on_player_command`, `player_chat`, `on_block_break`, `entity_spawn`, or `player_join` are **not registered hooks** in this version. If a requested behavior requires an unsupported hook, it needs a Java-side implementation; inventing a hook name will fail at runtime.
+These are the **five supported hook events** in the updated `LuaHookManager`. Names like `on_player_command`, `on_block_break`, `entity_spawn`, or `player_join` are **not registered hooks** in this version. If a requested behavior requires an unsupported hook, it needs a Java-side implementation; inventing a hook name will fail at runtime.
+
+The `player_chat` hook only detects player chat messages, not messages sent using `basicChat()` or `sendPlayerMessage()`. The `player_command` hook detects commands using a player execution source, which may include commands invoked programmatically as that player. Commands invoked from inside a `player_command` callback won't trigger that hook recursively.
 
 ### Hook functions
 
@@ -358,13 +412,86 @@ hook.Add("living_hurt", "half_damage", function(ctx)
 end)
 ```
 
+### Example: detect chat messages
+
+```lua
+hook.Add("player_chat", "hello_detector", function(ctx)
+    if ctx.message:lower() == "hello" then
+        sendPlayerMessage(ctx.player, "Hello!")
+    end
+end)
+```
+
+The `player_chat` hook receives the message sent by the player as `ctx.message`. Messages starting with `!` are ignored by this hook so they can continue being processed as AI requests.
+
+### Example: cancel chat messages
+
+```lua
+hook.Add("player_chat", "filter_chat", function(ctx)
+    if ctx.message:lower():find("forbidden", 1, true) then
+        ctx.cancel = true
+        sendPlayerMessage(ctx.player, "You cannot say that!")
+    end
+end)
+```
+
+Setting `ctx.cancel = true` prevents the original chat message from being broadcast. The callback can still send its own messages to the player.
+
+### Example: detect Minecraft commands
+
+```lua
+hook.Add("player_command", "tp_detector", function(ctx)
+    if ctx.name == "tp" or ctx.name == "teleport" then
+        sendPlayerMessage(ctx.player, "Teleport command detected!")
+    end
+end)
+```
+
+The `ctx.command` field contains the full command without the leading `/`, while `ctx.name` contains only the root command name.
+
+For example, executing `/tp Dev 100 70 200` would provide:
+
+- `ctx.command` = `"tp Dev 100 70 200"`
+- `ctx.name` = `"tp"`
+
+### Example: block a Minecraft command
+
+```lua
+hook.Add("player_command", "disable_kill", function(ctx)
+    if ctx.name == "kill" then
+        ctx.cancel = true
+        sendPlayerMessage(ctx.player, "The /kill command is disabled!")
+    end
+end)
+```
+
+Setting `ctx.cancel = true` prevents the original command from executing. This does not remove the command from Minecraft; it only prevents execution while the hook is active.
+
 ### Example: remove a hook
 
 ```lua
 hook.Remove("block_break", "prevent_breaking")
+hook.Remove("player_chat", "hello_detector")
+hook.Remove("player_command", "disable_kill")
 ```
 
-Hooks are held in memory and cleared when the server stops. Saving a Lua event containing `hook.Add` in `events.json` does **not** automatically make that hook active after a restart. The registration event must run again to install it. When a callback throws an error, the hook manager logs the error and disconnects that callback to prevent repeated failures.
+You can also disconnect a hook using the connection object returned by `hook.Add`:
+
+```lua
+local connection = hook.Add("player_chat", "test_hook", function(ctx)
+    sendPlayerMessage(ctx.player, "Message detected!")
+end)
+
+connection:Disconnect()
+```
+
+### Hook lifetime and errors
+
+Hooks are held in memory and cleared when the server stops. Saving a Lua event containing `hook.Add` in `events.json` does **not** automatically make that hook active after a restart. The registration event must run again to install it.
+
+When a callback throws an error, the hook manager logs the error and disconnects that callback to prevent repeated failures.
+
+The chat and command hooks are implemented directly in `LuaHookManager`, not through a separate Java bridge. Chat callbacks are executed on the server thread because Minecraft chat processing may happen asynchronously. If the dispatch takes longer than three seconds, the original message is allowed through rather than being cancelled.
 
 ## Mod integration and Pehkui (`LuaModAPI`, `LuaPehkuiAPI`)
 
@@ -426,6 +553,80 @@ After validating the response, TwitchMod saves definition changes, reloads chang
 A successful one-shot trigger changes `run_event` to `null` in `latest_response.json` to prevent a manual re-interpretation from replaying it. This does not delete the event definition. Also, an event that installs a hook may execute successfully without producing an immediate visible effect: the hook callback only runs when the corresponding gameplay action occurs.
 
 For a minimal test of the mechanism, use an event whose code is `basicChat("One-shot event ran!")` and set `"run_event"` to that event's ID. Keep `items` and `recipes` empty while testing, so their reloads cannot interfere.
+
+For lasting hook registrations or other safe startup initialization, use `"persistent": true`. Never use this flag on one-off explosions, TNT storms, spawning events, or other actions that should not repeat when the world reopens.
+
+## Persistent Lua values (`LuaPersistentAPI`)
+
+Minecraft saves persistent Lua values in each world's `data/twitchmod_lua.dat` file using vanilla `SavedData`. They are shared across dimensions **within the same world**, but not between worlds. Values are saved during Minecraft's ordinary world-save cycle rather than immediately after every change.
+
+| Lua function | What it does |
+|---|---|
+| `getPersistentValue(key, default)` | Returns the saved value for `key`, or `default` if it doesn't exist. The default can be `nil`. |
+| `setPersistentValue(key, value)` | Saves a number, string, boolean, or Lua table. |
+| `hasPersistentValue(key)` | Returns whether a value has been saved under that key. |
+| `removePersistentValue(key)` | Deletes a value; returns whether anything was removed. |
+| `getPersistentKeys()` | Returns an array of all saved keys in alphabetical order. |
+
+Keys must be 1–128 letters, digits, `.`, `_`, `-` or `:`. Lua tables can contain string, number or boolean keys and simple values/nested tables. Functions, userdata, threads, `nil`, recursive tables, NaN and infinity cannot be stored. Limits: 256 saved keys, 8,192 characters per serialized value and 256 KiB total stored JSON content. The API runs on the Minecraft server thread.
+
+### Example: persistent chat counter
+
+```lua
+hook.Add("player_chat", "count_messages", function(ctx)
+    local count = getPersistentValue("messages.total", 0) + 1
+    setPersistentValue("messages.total", count)
+    if ctx.message == "count" then
+        sendPlayerMessage(ctx.player, "Messages counted: " .. count)
+    end
+end)
+```
+
+To restore this hook on world startup, save it inside an `events.json` definition marked `"persistent": true`. The hook callback is re-created when the world opens and the counter is read from the saved value on each message.
+
+## Persistent event registrations
+
+Event definitions still live in the world's `twitchmod/events.json`. Mark **safe installation events** `"persistent": true` to automatically re-run them after restarting the world. These events should install hooks or initialize recurring rules without immediately performing destructive one-time actions. The Lua runtime itself is not serialized: local variables, active timers, and paused `wait()` calls do not resume mid-execution. Use `getPersistentValue` and `setPersistentValue` for data that must survive.
+
+```json
+{
+  "events": [{
+    "id": "count_chat_messages",
+    "action": "add",
+    "name": "Persistent Chat Counter",
+    "persistent": true,
+    "code": [
+      "hook.Add('player_chat', 'count_messages', function(ctx)",
+      "  local n = getPersistentValue('messages.total', 0) + 1",
+      "  setPersistentValue('messages.total', n)",
+      "end)"
+    ]
+  }],
+  "items": [],
+  "recipes": [],
+  "run_event": "count_chat_messages"
+}
+```
+
+`run_event` starts it once now; `persistent` installs it again each time the world starts. Removing the stored event or setting `persistent` to false prevents future automatic installation. A hook already active in the current session still needs `hook.Remove()` or a restart to stop.
+
+## World-only screen mirroring (`LuaScreenMirrorAPI`)
+
+| Lua function | What it does |
+|---|---|
+| `setScreenMirror(player, horizontal, vertical [, durationTicks])` | Mirrors the rendered 3D scene horizontally and/or vertically for one player. `durationTicks` is optional; omitted or `0` means until cleared. Maximum timed duration is 72,000 ticks. |
+| `clearScreenMirror(player)` | Restores the original world view immediately. |
+
+Example:
+
+```lua
+local player = getPlayer("Dev")
+if player then
+    setScreenMirror(player, true, false, 200) -- horizontal mirror for 10 seconds
+end
+```
+
+This is an image mirror, **not** a 180° camera rotation and not a change to mouse controls. It copies and flips the completed world framebuffer before vanilla renders the first-person hand and HUD, leaving those unmirrored. Requires the mod on the client and can conflict with third-party shaders or framebuffer-replacement mods. Mirror state is temporary and resets on disconnect; it is not a persistent value.
 
 ### Items
 
@@ -889,6 +1090,12 @@ These are examples, so player names and event IDs should be adjusted to match th
 Note: Keep generated Lua simple. Don't add unnecessary dimension checks, compatibility checks, fallback systems, or unrelated event logic unless the request actually needs them. Use ```wait()``` for sequential delays and ```timer()``` for callback-based delays. Always return the complete JSON response.
 
 Multiple events can be created in the same response. `run_event` identifies the event to execute immediately.
+
+If the user asks for something to happen immediately, create the event and set `run_event` to its ID. If the user only asks to create an item or install a hook, only run an event if needed to perform that installation or hand over the item. Don't invent Lua functions or assume unsupported capabilities exist.
+
+## Conner's behaviour
+
+Conner should **do what the message asks**, rather than having a conversation about what it could do. When asked to make or change an item, event, hook, or recipe, generate the actual Lua/JSON changes. Don't ask unnecessary follow-up questions or add a chat-only event just to announce success. Only use `basicChat()` or `sendPlayerMessage()` when the request needs actual in-game feedback or explicitly asks for a reply.
 
 ### Common Mistakes to Avoid
 
